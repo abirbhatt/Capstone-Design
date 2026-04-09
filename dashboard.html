@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart ACL Recovery Brace</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg:       #0d1b2a;
+      --card:     #122030;
+      --border:   #1a3050;
+      --teal:     #00c8aa;
+      --green:    #00e396;
+      --orange:   #ff8c42;
+      --red:      #ff4560;
+      --text:     #e2e8f0;
+      --muted:    #6a8099;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Config Modal ──────────────────────────────────────── */
+    .modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(4px);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 200;
+    }
+    .modal {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 36px;
+      width: 380px;
+    }
+    .modal h2 {
+      font-size: 20px;
+      color: var(--teal);
+      margin-bottom: 6px;
+    }
+    .modal p {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 28px;
+      line-height: 1.5;
+    }
+    .field { margin-bottom: 18px; }
+    .field label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 7px;
+    }
+    .field input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 11px 14px;
+      color: var(--text);
+      font-size: 15px;
+      font-family: 'Courier New', monospace;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .field input:focus { border-color: var(--teal); }
+    .connect-btn {
+      width: 100%;
+      background: var(--teal);
+      color: #0d1b2a;
+      border: none;
+      border-radius: 8px;
+      padding: 13px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 8px;
+      letter-spacing: 0.5px;
+      transition: opacity 0.2s;
+    }
+    .connect-btn:hover { opacity: 0.88; }
+
+    /* ── Header ───────────────────────────────────────────── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 24px;
+      background: #090f18;
+      border-bottom: 1px solid var(--border);
+    }
+    .header-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--teal);
+      letter-spacing: 0.5px;
+    }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+    .session-timer {
+      font-size: 22px;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 1px;
+    }
+    .connections {
+      display: flex;
+      gap: 14px;
+    }
+    .conn-pill {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 11px;
+      border-radius: 20px;
+      background: #0a1520;
+      border: 1px solid var(--border);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      transition: all 0.3s;
+    }
+    .conn-pill .dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #2a3f5c;
+      transition: background 0.3s, box-shadow 0.3s;
+    }
+    .conn-pill.online { color: var(--text); border-color: #1a4035; }
+    .conn-pill.online .dot {
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+    }
+
+    /* ── Alert Banner ─────────────────────────────────────── */
+    .alert-banner {
+      display: none;
+      background: var(--red);
+      color: #fff;
+      text-align: center;
+      padding: 9px 24px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      animation: bannerPulse 0.9s ease-in-out infinite;
+    }
+    .alert-banner.visible { display: block; }
+    @keyframes bannerPulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.6; }
+    }
+
+    /* ── Main grid ────────────────────────────────────────── */
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      padding: 14px;
+    }
+
+    /* ── Leg Panel ────────────────────────────────────────── */
+    .leg-panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px;
+      transition: border-color 0.3s, box-shadow 0.3s;
+    }
+    .leg-panel.danger {
+      border-color: rgba(255, 69, 96, 0.6);
+      box-shadow: 0 0 20px rgba(255, 69, 96, 0.12);
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+    }
+    .panel-label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .role-badge {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      padding: 3px 9px;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+    .role-badge.injured {
+      background: rgba(255, 69, 96, 0.12);
+      color: var(--red);
+    }
+    .role-badge.healthy {
+      background: rgba(0, 227, 150, 0.12);
+      color: var(--green);
+    }
+
+    /* ── Gauge ────────────────────────────────────────────── */
+    .gauge-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .gauge-svg { width: 210px; height: 120px; overflow: visible; }
+    .gauge-number {
+      font-size: 46px;
+      font-weight: 900;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+      margin-top: 2px;
+      transition: color 0.3s;
+    }
+    .gauge-unit {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 5px;
+      letter-spacing: 0.5px;
+    }
+    .status-badge {
+      display: inline-block;
+      margin-top: 10px;
+      padding: 4px 14px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      transition: all 0.2s;
+    }
+    .status-badge.safe    { background: rgba(0,200,170,.12); color: var(--teal); border: 1px solid rgba(0,200,170,.25); }
+    .status-badge.caution { background: rgba(255,140,66,.12); color: var(--orange); border: 1px solid rgba(255,140,66,.25); }
+    .status-badge.danger  {
+      background: rgba(255,69,96,.12); color: var(--red); border: 1px solid rgba(255,69,96,.35);
+      animation: bannerPulse 0.8s infinite;
+    }
+
+    /* ── Stats Row ────────────────────────────────────────── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    .stat-box {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 13px 14px;
+    }
+    .stat-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .stat-value {
+      font-size: 24px;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      margin-top: 5px;
+    }
+    .stat-value.pending { color: var(--muted); font-size: 16px; font-style: italic; }
+    .stat-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+    /* ── Bottom Row ───────────────────────────────────────── */
+    .bottom-row {
+      display: grid;
+      grid-template-columns: 1fr 2fr;
+      gap: 14px;
+      padding: 0 14px 14px;
+    }
+
+    /* ── Symmetry Panel ───────────────────────────────────── */
+    .symmetry-panel, .chart-panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px;
+    }
+    .section-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .sym-big {
+      font-size: 38px;
+      font-weight: 900;
+      font-variant-numeric: tabular-nums;
+      text-align: center;
+      margin-bottom: 6px;
+      transition: color 0.3s;
+    }
+    .sym-sub {
+      font-size: 12px;
+      color: var(--muted);
+      text-align: center;
+      min-height: 18px;
+      margin-bottom: 18px;
+    }
+    .bar-track {
+      position: relative;
+      height: 18px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      overflow: hidden;
+    }
+    .bar-fill {
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 50%;
+      background: var(--teal);
+      border-radius: 9px;
+      transition: width 0.35s ease, background 0.35s;
+    }
+    .bar-mid {
+      position: absolute;
+      left: 50%; top: 0; bottom: 0;
+      width: 2px;
+      margin-left: -1px;
+      background: rgba(255,255,255,0.15);
+    }
+    .bar-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 7px;
+    }
+
+    /* ── Chart Panel ──────────────────────────────────────── */
+    .chart-legend {
+      display: flex;
+      gap: 18px;
+    }
+    .legend-entry {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .legend-line { width: 18px; height: 3px; border-radius: 2px; }
+    .chart-wrap { position: relative; height: 165px; }
+
+    /* ── Responsive tweak ─────────────────────────────────── */
+    @media (max-width: 700px) {
+      .main-grid { grid-template-columns: 1fr; }
+      .bottom-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Config Modal ─────────────────────────────────────────────── -->
+<div class="modal-overlay" id="configModal">
+  <div class="modal">
+    <h2>Connect to Brace</h2>
+    <p>
+      Flash both ESP32s, open the Serial Monitor (115200 baud), and note the
+      IP address printed for each. Enter them below.
+    </p>
+    <div class="field">
+      <label>Injured Leg — ESP32 IP</label>
+      <input id="ipInjured" type="text" value="192.168.1.100" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <label>Healthy Leg — ESP32 IP</label>
+      <input id="ipHealthy" type="text" value="192.168.1.101" autocomplete="off" spellcheck="false">
+    </div>
+    <button class="connect-btn" onclick="startSession()">Connect &amp; Start Session</button>
+  </div>
+</div>
+
+<!-- ── Header ───────────────────────────────────────────────────── -->
+<header class="header">
+  <div class="header-title">🦵 Smart ACL Recovery Brace</div>
+  <div class="header-right">
+    <div class="session-timer" id="timerDisplay">00:00</div>
+    <div class="connections">
+      <div class="conn-pill" id="connInjured">
+        <div class="dot"></div>
+        <span>Injured</span>
+      </div>
+      <div class="conn-pill" id="connHealthy">
+        <div class="dot"></div>
+        <span>Healthy</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ── Alert Banner ─────────────────────────────────────────────── -->
+<div class="alert-banner" id="alertBanner">
+  ⚠&nbsp; UNSAFE KNEE ANGLE — CHECK FORM IMMEDIATELY
+</div>
+
+<!-- ── Leg Panels ───────────────────────────────────────────────── -->
+<div class="main-grid">
+
+  <!-- Injured -->
+  <div class="leg-panel" id="panelInjured">
+    <div class="panel-header">
+      <span class="panel-label">Injured Leg</span>
+      <span class="role-badge injured">Primary</span>
+    </div>
+    <div class="gauge-wrap">
+      <svg class="gauge-svg" viewBox="0 0 210 118" id="svgInjured">
+        <path id="gBgInjured"   fill="none" stroke="#1a3050" stroke-width="13" stroke-linecap="round"/>
+        <path id="gFillInjured" fill="none" stroke="#00c8aa" stroke-width="13" stroke-linecap="round"/>
+        <circle id="gMarkInjured" r="5" fill="#ff4560"/>
+      </svg>
+      <div class="gauge-number" id="numInjured" style="color:var(--teal)">--.-</div>
+      <div class="gauge-unit">degrees flexion</div>
+      <div class="status-badge safe" id="badgeInjured">Safe Range</div>
+    </div>
+    <div class="stats-row">
+      <div class="stat-box">
+        <div class="stat-label">Load</div>
+        <div class="stat-value pending" id="loadInjured">---</div>
+        <div class="stat-sub" id="loadInjuredSub">pending sensor</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Peak Angle</div>
+        <div class="stat-value" id="peakInjured" style="color:var(--teal)">--.-</div>
+        <div class="stat-sub">this session</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Healthy -->
+  <div class="leg-panel" id="panelHealthy">
+    <div class="panel-header">
+      <span class="panel-label">Healthy Leg</span>
+      <span class="role-badge healthy">Reference</span>
+    </div>
+    <div class="gauge-wrap">
+      <svg class="gauge-svg" viewBox="0 0 210 118" id="svgHealthy">
+        <path id="gBgHealthy"   fill="none" stroke="#1a3050" stroke-width="13" stroke-linecap="round"/>
+        <path id="gFillHealthy" fill="none" stroke="#00e396" stroke-width="13" stroke-linecap="round"/>
+        <circle id="gMarkHealthy" r="5" fill="#ff4560"/>
+      </svg>
+      <div class="gauge-number" id="numHealthy" style="color:var(--green)">--.-</div>
+      <div class="gauge-unit">degrees flexion</div>
+      <div class="status-badge safe" id="badgeHealthy">Safe Range</div>
+    </div>
+    <div class="stats-row">
+      <div class="stat-box">
+        <div class="stat-label">Load</div>
+        <div class="stat-value pending" id="loadHealthy">---</div>
+        <div class="stat-sub" id="loadHealthySub">pending sensor</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Peak Angle</div>
+        <div class="stat-value" id="peakHealthy" style="color:var(--green)">--.-</div>
+        <div class="stat-sub">this session</div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /.main-grid -->
+
+<!-- ── Bottom Row ───────────────────────────────────────────────── -->
+<div class="bottom-row">
+
+  <!-- Load Symmetry -->
+  <div class="symmetry-panel">
+    <div class="section-title">Load Symmetry</div>
+    <div class="sym-big" id="symValue" style="color:var(--muted)">---</div>
+    <div class="sym-sub" id="symSub">Waiting for load cells</div>
+    <div class="bar-track">
+      <div class="bar-fill" id="symBar"></div>
+      <div class="bar-mid"></div>
+    </div>
+    <div class="bar-labels">
+      <span>Injured</span>
+      <span>50 / 50</span>
+      <span>Healthy</span>
+    </div>
+  </div>
+
+  <!-- Live Angle Chart -->
+  <div class="chart-panel">
+    <div class="section-title">
+      <span>Knee Angle — Live</span>
+      <div class="chart-legend">
+        <div class="legend-entry">
+          <div class="legend-line" style="background:#00c8aa"></div>
+          <span>Injured</span>
+        </div>
+        <div class="legend-entry">
+          <div class="legend-line" style="background:#00e396"></div>
+          <span>Healthy</span>
+        </div>
+        <div class="legend-entry">
+          <div class="legend-line" style="background:rgba(255,69,96,0.5); border-top: 2px dashed rgba(255,69,96,0.5); height:0;"></div>
+          <span>100° limit</span>
+        </div>
+      </div>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="liveChart"></canvas>
+    </div>
+  </div>
+
+</div><!-- /.bottom-row -->
+
+<script>
+// ── Constants ──────────────────────────────────────────────────
+const SAFE_MAX     = 100;   // degrees — alert threshold (matches firmware)
+const CAUTION_MIN  = 85;    // degrees — caution zone start
+const KNEE_GAUGE_MAX = 130; // full-scale on gauge arc
+const CHART_PTS    = 120;   // rolling window (~6 s at 20 Hz)
+
+// Gauge arc geometry  (SVG viewBox 0 0 210 118)
+const G = { cx: 105, cy: 112, r: 92 };
+
+// ── Session state ──────────────────────────────────────────────
+let sessionStart  = null;
+let peakInjured   = 0;
+let peakHealthy   = 0;
+let loadInjured   = null;
+let loadHealthy   = null;
+
+// ── Gauge helpers ──────────────────────────────────────────────
+function polar(svgDeg) {
+  const rad = svgDeg * Math.PI / 180;
+  return { x: G.cx + G.r * Math.cos(rad), y: G.cy + G.r * Math.sin(rad) };
+}
+
+// Knee 0° → SVG 180° (left), knee KNEE_GAUGE_MAX° → SVG 0° (right)
+function kneeToSvg(knee) {
+  return 180 - (Math.min(Math.max(knee, 0), KNEE_GAUGE_MAX) / KNEE_GAUGE_MAX) * 180;
+}
+
+function arcD(svgStart, svgEnd) {
+  const s = polar(svgStart);
+  const e = polar(svgEnd);
+  // Going counterclockwise (sweep flag = 0) from left (180°) to right (0°)
+  const diff = svgStart - svgEnd;
+  const large = diff > 180 ? 1 : 0;
+  return `M ${s.x.toFixed(2)} ${s.y.toFixed(2)} A ${G.r} ${G.r} 0 ${large} 0 ${e.x.toFixed(2)} ${e.y.toFixed(2)}`;
+}
+
+function initGauge(bgId, fillId, markId) {
+  document.getElementById(bgId).setAttribute('d', arcD(180, 0));
+
+  // Threshold marker at SAFE_MAX degrees
+  const markerSvg = kneeToSvg(SAFE_MAX);
+  const mp = polar(markerSvg);
+  const m  = document.getElementById(markId);
+  m.setAttribute('cx', mp.x.toFixed(2));
+  m.setAttribute('cy', mp.y.toFixed(2));
+}
+
+function updateGauge(fillId, numId, badgeId, panelId, angle, isInjured) {
+  const endSvg = kneeToSvg(angle);
+  document.getElementById(fillId).setAttribute('d', arcD(180, endSvg));
+
+  let color, statusText, statusClass;
+  if (angle > SAFE_MAX) {
+    color = 'var(--red)'; statusText = 'UNSAFE'; statusClass = 'status-badge danger';
+  } else if (angle > CAUTION_MIN) {
+    color = 'var(--orange)'; statusText = 'Caution'; statusClass = 'status-badge caution';
+  } else {
+    color = isInjured ? 'var(--teal)' : 'var(--green)';
+    statusText = 'Safe Range'; statusClass = 'status-badge safe';
+  }
+
+  document.getElementById(fillId).setAttribute('stroke', color);
+  const numEl = document.getElementById(numId);
+  numEl.textContent = angle.toFixed(1);
+  numEl.style.color = color;
+
+  const badge = document.getElementById(badgeId);
+  badge.textContent = statusText;
+  badge.className   = statusClass;
+
+  const panel = document.getElementById(panelId);
+  panel.className = 'leg-panel' + (angle > SAFE_MAX ? ' danger' : '');
+}
+
+// ── Live Chart ────────────────────────────────────────────────
+const injData  = Array(CHART_PTS).fill(null);
+const hlthData = Array(CHART_PTS).fill(null);
+
+const liveChart = new Chart(document.getElementById('liveChart'), {
+  type: 'line',
+  data: {
+    labels: Array(CHART_PTS).fill(''),
+    datasets: [
+      {
+        label: 'Injured',
+        data: injData,
+        borderColor: '#00c8aa',
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.35,
+        spanGaps: true,
+      },
+      {
+        label: 'Healthy',
+        data: hlthData,
+        borderColor: '#00e396',
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.35,
+        spanGaps: true,
+      },
+      {
+        label: 'Limit',
+        data: Array(CHART_PTS).fill(SAFE_MAX),
+        borderColor: 'rgba(255,69,96,0.45)',
+        borderWidth: 1.5,
+        borderDash: [5, 5],
+        pointRadius: 0,
+        spanGaps: true,
+      }
+    ]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    plugins: { legend: { display: false }, tooltip: { enabled: false } },
+    scales: {
+      x: { display: false },
+      y: {
+        min: 0, max: 130,
+        grid:   { color: 'rgba(26,48,80,0.9)', drawBorder: false },
+        ticks:  { color: '#6a8099', font: { size: 10 }, stepSize: 30,
+                  callback: v => v + '°' },
+        border: { color: 'transparent' }
+      }
+    }
+  }
+});
+
+function pushChart(dataset, value) {
+  dataset.shift();
+  dataset.push(value);
+}
+
+// ── Load symmetry ─────────────────────────────────────────────
+function refreshSymmetry() {
+  if (loadInjured === null || loadHealthy === null) return;
+  const total = loadInjured + loadHealthy;
+  if (total < 1) return;
+  const pct = (loadInjured / total) * 100;
+
+  const bal = Math.abs(pct - 50) < 10;
+  const color = bal ? 'var(--teal)' : 'var(--orange)';
+
+  document.getElementById('symValue').textContent = pct.toFixed(0) + '%';
+  document.getElementById('symValue').style.color = color;
+  document.getElementById('symSub').textContent =
+    bal          ? '✓ Well balanced'             :
+    pct < 40     ? '⚠ Favouring healthy leg'     :
+                   '⚠ Overloading injured leg';
+  document.getElementById('symBar').style.width      = pct + '%';
+  document.getElementById('symBar').style.background = color;
+}
+
+// ── Data handler ──────────────────────────────────────────────
+function handlePacket(data) {
+  const inj = data.leg === 'injured';
+  const ang = data.knee_angle;
+  const kg  = data.load_kg;
+
+  // Gauge + badge + panel glow
+  if (inj) {
+    updateGauge('gFillInjured', 'numInjured', 'badgeInjured', 'panelInjured', ang, true);
+    // Alert banner
+    document.getElementById('alertBanner').className =
+      'alert-banner' + (data.alert ? ' visible' : '');
+    // Peak
+    if (ang > peakInjured) {
+      peakInjured = ang;
+      const el = document.getElementById('peakInjured');
+      el.textContent   = ang.toFixed(1);
+      el.style.color   = ang > SAFE_MAX ? 'var(--red)' : 'var(--teal)';
+    }
+    pushChart(injData, ang);
+  } else {
+    updateGauge('gFillHealthy', 'numHealthy', 'badgeHealthy', 'panelHealthy', ang, false);
+    if (ang > peakHealthy) {
+      peakHealthy = ang;
+      document.getElementById('peakHealthy').textContent = ang.toFixed(1);
+    }
+    pushChart(hlthData, ang);
+  }
+
+  // Load cell (load_kg > 0 means sensor is live)
+  if (kg > 0) {
+    const loadEl  = document.getElementById(inj ? 'loadInjured'    : 'loadHealthy');
+    const loadSub = document.getElementById(inj ? 'loadInjuredSub' : 'loadHealthySub');
+    loadEl.textContent  = kg.toFixed(1);
+    loadEl.className    = 'stat-value';
+    loadSub.textContent = 'kg';
+    if (inj) loadInjured  = kg;
+    else     loadHealthy  = kg;
+    refreshSymmetry();
+  }
+
+  liveChart.update('none');
+}
+
+// ── WebSocket connection ───────────────────────────────────────
+function connectWS(ip, leg) {
+  const pillId = leg === 'injured' ? 'connInjured' : 'connHealthy';
+  const pill   = document.getElementById(pillId);
+  const ws     = new WebSocket(`ws://${ip}/ws`);
+
+  ws.onopen = () => {
+    pill.className = 'conn-pill online';
+    console.log(`[${leg}] connected to ${ip}`);
+  };
+  ws.onmessage = e => {
+    try { handlePacket(JSON.parse(e.data)); } catch { /* ignore malformed */ }
+  };
+  ws.onclose = () => {
+    pill.className = 'conn-pill';
+    console.log(`[${leg}] disconnected, retrying in 3 s…`);
+    setTimeout(() => connectWS(ip, leg), 3000);
+  };
+  ws.onerror = () => ws.close();
+}
+
+// ── Session timer ─────────────────────────────────────────────
+setInterval(() => {
+  if (!sessionStart) return;
+  const s   = Math.floor((Date.now() - sessionStart) / 1000);
+  const mm  = String(Math.floor(s / 60)).padStart(2, '0');
+  const ss  = String(s % 60).padStart(2, '0');
+  document.getElementById('timerDisplay').textContent = `${mm}:${ss}`;
+}, 1000);
+
+// ── Start ─────────────────────────────────────────────────────
+function startSession() {
+  const ipInj  = document.getElementById('ipInjured').value.trim();
+  const ipHlth = document.getElementById('ipHealthy').value.trim();
+
+  document.getElementById('configModal').style.display = 'none';
+  sessionStart = Date.now();
+
+  initGauge('gBgInjured',  'gFillInjured',  'gMarkInjured');
+  initGauge('gBgHealthy',  'gFillHealthy',  'gMarkHealthy');
+
+  connectWS(ipInj,  'injured');
+  connectWS(ipHlth, 'healthy');
+}
+</script>
+</body>
+</html>
