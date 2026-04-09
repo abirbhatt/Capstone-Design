@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Smart ACL Brace</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; padding: 40px; background: #0f172a; color: white; }
+    h1 { color: #38bdf8; }
+    #angle { font-size: 80px; font-weight: bold; color: #34d399; margin: 20px 0; }
+    button {
+      padding: 12px 28px; font-size: 16px; border-radius: 8px;
+      border: none; cursor: pointer; background: #38bdf8; color: #0f172a; font-weight: bold;
+    }
+    button:hover { background: #7dd3fc; }
+    #status { margin-top: 16px; color: #94a3b8; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <h1>🦵 Smart ACL Brace</h1>
+  <div id="angle">--°</div>
+  <button onclick="connect()">Connect via Bluetooth</button>
+  <div id="status">Not connected</div>
+
+  <script>
+    const SERVICE_UUID = "12345678-1234-1234-1234-123456789abc";
+    const CHAR_UUID    = "abcd1234-ab12-ab12-ab12-abcdef123456";
+
+    async function connect() {
+      const status = document.getElementById("status");
+      try {
+        status.textContent = "Scanning...";
+        const device = await navigator.bluetooth.requestDevice({
+          filters: [{ name: "SmartACLBrace" }],
+          optionalServices: [SERVICE_UUID]
+        });
+
+        status.textContent = "Connecting...";
+        const server  = await device.gatt.connect();
+        const service = await server.getPrimaryService(SERVICE_UUID);
+        const char    = await service.getCharacteristic(CHAR_UUID);
+
+        await char.startNotifications();
+        char.addEventListener("characteristicvaluechanged", e => {
+          const val = new TextDecoder().decode(e.target.value);
+          document.getElementById("angle").textContent = parseFloat(val).toFixed(1) + "°";
+        });
+
+        status.textContent = `Connected to ${device.name}`;
+      } catch (err) {
+        status.textContent = "Error: " + err.message;
+      }
+    }
+  </script>
+</body>
+</html>
