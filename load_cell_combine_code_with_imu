@@ -14,7 +14,7 @@ const int HX711_SCK = 19;
   const char* LEG_NAME   = "injured";
 #else
   const float CALIB_HEEL = 40136.0;
-  const float CALIB_TOE  = -9593.0;
+  const float CALIB_TOE  = -24300.0;
   const char* LEG_NAME   = "healthy";
 #endif
 
