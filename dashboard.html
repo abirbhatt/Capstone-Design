@@ -692,11 +692,8 @@
   <div class="load-card">
     <div class="load-header">
       <span class="load-label">Load Distribution</span>
-      <button class="tare-btn" id="tareBtn" onclick="sendTare()" disabled>⚖ Tare Both</button>
+      <button class="tare-btn" id="tareBtn" onclick="sendTare()" disabled>⚖ Tare</button>
     </div>
-
-    <!-- Injured leg -->
-    <div class="load-leg-label" style="color:var(--orange)">Injured Leg</div>
     <div class="load-values">
       <div class="load-val-box">
         <div class="load-val-label">Heel</div>
@@ -719,45 +716,7 @@
       <div class="balance-toe"  id="balanceToe"  style="width:50%;background:var(--green)"></div>
     </div>
     <div class="balance-labels"><span>← Heel</span><span>Toe →</span></div>
-
-    <!-- Healthy leg -->
-    <div class="load-leg-label" style="color:var(--teal)">Healthy Leg</div>
-    <div class="load-values">
-      <div class="load-val-box">
-        <div class="load-val-label">Heel</div>
-        <div class="load-val-num" id="heelValH" style="color:var(--teal)">--</div>
-        <div class="load-val-unit">kg</div>
-      </div>
-      <div class="load-val-box">
-        <div class="load-val-label">Total</div>
-        <div class="load-val-num" id="totalValH" style="color:var(--text)">--</div>
-        <div class="load-val-unit">kg</div>
-      </div>
-      <div class="load-val-box">
-        <div class="load-val-label">Toe</div>
-        <div class="load-val-num" id="toeValH" style="color:var(--green)">--</div>
-        <div class="load-val-unit">kg</div>
-      </div>
-    </div>
-    <div class="balance-track">
-      <div class="balance-heel" id="balanceHeelH" style="width:50%;background:var(--teal)"></div>
-      <div class="balance-toe"  id="balanceToeH"  style="width:50%;background:var(--green)"></div>
-    </div>
-    <div class="balance-labels"><span>← Heel</span><span>Toe →</span></div>
-
-    <!-- Leg symmetry -->
-    <div class="load-divider"></div>
-    <div class="load-leg-label">Weight Symmetry</div>
-    <div class="symmetry-track">
-      <div class="symmetry-injured" id="symmetryInjured" style="width:50%;background:var(--orange)"></div>
-      <div class="symmetry-healthy" id="symmetryHealthy"  style="width:50%;background:var(--teal)"></div>
-      <div class="symmetry-center-tick"></div>
-    </div>
-    <div class="symmetry-labels">
-      <span style="color:var(--orange)">← Injured</span>
-      <span style="color:var(--teal)">Healthy →</span>
-    </div>
-    <div class="symmetry-status" id="symmetryStatus" style="color:var(--muted)">Waiting for data...</div>
+    <div class="balance-status" id="balanceStatus" style="color:var(--muted);text-align:center;font-size:12px;font-weight:600;margin-top:8px">Waiting for data...</div>
   </div>
 
   <!-- Chart -->
@@ -801,7 +760,7 @@ const SAFE_MAX      = 90;
 const ALERT_MAX     = 100;
 const GAUGE_MAX     = 130;    // full-scale on arc
 const CHART_PTS     = 150;    // ~7.5s at 20Hz
-const VALGUS_ALERT  = 15;     // degrees — matches firmware
+const VALGUS_ALERT  = 10;     // degrees — matches firmware
 
 // Gauge geometry — SVG viewBox 0 0 280 155
 const G = { cx: 140, cy: 148, r: 118 };
@@ -1096,67 +1055,39 @@ function stopAndNext() {
 }
 
 // ── Load distribution ────────────────────────────────────────
-function renderLegBalance(heelId, toeId, totalId, balHeelId, balToeId, heel, toe) {
+function updateLoad(heel, toe) {
   const total = heel + toe;
-  document.getElementById(heelId).textContent  = heel.toFixed(2);
-  document.getElementById(toeId).textContent   = toe.toFixed(2);
-  document.getElementById(totalId).textContent = total.toFixed(2);
+  document.getElementById('heelVal').textContent  = heel.toFixed(2);
+  document.getElementById('toeVal').textContent   = toe.toFixed(2);
+  document.getElementById('totalVal').textContent = total.toFixed(2);
+
+  const status = document.getElementById('balanceStatus');
 
   if (total <= 0.05) {
-    document.getElementById(balHeelId).style.width = '50%';
-    document.getElementById(balToeId).style.width  = '50%';
+    document.getElementById('balanceHeel').style.width = '50%';
+    document.getElementById('balanceToe').style.width  = '50%';
+    status.textContent = 'No load detected';
+    status.style.color = 'var(--muted)';
     return;
   }
+
   const heelPct = Math.max(0, Math.min(100, (heel / total) * 100));
-  document.getElementById(balHeelId).style.width = heelPct.toFixed(1) + '%';
-  document.getElementById(balToeId).style.width  = (100 - heelPct).toFixed(1) + '%';
-  const color = (heelPct > 70 || (100 - heelPct) > 70) ? 'var(--orange)' : 'var(--teal)';
-  document.getElementById(balHeelId).style.background = color;
-}
+  const toePct  = 100 - heelPct;
+  document.getElementById('balanceHeel').style.width = heelPct.toFixed(1) + '%';
+  document.getElementById('balanceToe').style.width  = toePct.toFixed(1)  + '%';
 
-function updateLoad(heel, toe, heelH, toeH) {
-  // Per-leg heel/toe bars
-  renderLegBalance('heelVal',  'toeVal',  'totalVal',  'balanceHeel',  'balanceToe',  heel,  toe);
-  renderLegBalance('heelValH', 'toeValH', 'totalValH', 'balanceHeelH', 'balanceToeH', heelH, toeH);
-
-  // Symmetry index — injured vs healthy total load
-  const totalI  = heel  + toe;
-  const totalH  = heelH + toeH;
-  const combined = totalI + totalH;
-  const symEl    = document.getElementById('symmetryStatus');
-
-  if (combined <= 0.1) {
-    symEl.textContent = 'Stand on both feet to measure symmetry';
-    symEl.style.color = 'var(--muted)';
-    return;
-  }
-
-  const injuredPct = (totalI / combined) * 100;
-  const healthyPct = 100 - injuredPct;
-
-  document.getElementById('symmetryInjured').style.width = injuredPct.toFixed(1) + '%';
-  document.getElementById('symmetryHealthy').style.width = healthyPct.toFixed(1) + '%';
-
-  // Color: within 5% of 50/50 = good, within 15% = caution, beyond = warning
-  const deviation = Math.abs(injuredPct - 50);
   let color, msg;
-  if (deviation <= 5) {
-    color = 'var(--teal)';
-    msg   = `Symmetric — ${injuredPct.toFixed(0)}% / ${healthyPct.toFixed(0)}% ✓`;
-  } else if (deviation <= 15) {
-    color = 'var(--orange)';
-    msg   = injuredPct < 50
-      ? `Offloading injured leg — ${injuredPct.toFixed(0)}% / ${healthyPct.toFixed(0)}%`
-      : `Overloading injured leg — ${injuredPct.toFixed(0)}% / ${healthyPct.toFixed(0)}%`;
+  if (heelPct > 70) {
+    color = 'var(--orange)'; msg = `Heel heavy — ${heelPct.toFixed(0)}% heel`;
+  } else if (toePct > 70) {
+    color = 'var(--orange)'; msg = `Toe heavy — ${toePct.toFixed(0)}% toe`;
   } else {
-    color = 'var(--red)';
-    msg   = injuredPct < 50
-      ? `⚠ Significant offload — only ${injuredPct.toFixed(0)}% on injured leg`
-      : `⚠ Too much load on injured leg — ${injuredPct.toFixed(0)}%`;
+    color = 'var(--teal)'; msg = `Balanced — ${heelPct.toFixed(0)}% heel / ${toePct.toFixed(0)}% toe`;
   }
-  document.getElementById('symmetryInjured').style.background = color;
-  symEl.textContent = msg;
-  symEl.style.color = color;
+  document.getElementById('balanceHeel').style.background = color;
+  document.getElementById('balanceToe').style.background  = 'var(--green)';
+  status.textContent = msg;
+  status.style.color = color;
 }
 
 function sendTare() {
@@ -1305,14 +1236,9 @@ function handlePacket(data) {
   if (Number.isFinite(valgus)) updateValgus(valgus);
 
   // Load distribution
-  const heel  = Number(data.heel);
-  const toe   = Number(data.toe);
-  const heelH = Number(data.heel_h);
-  const toeH  = Number(data.toe_h);
-  if (Number.isFinite(heel) && Number.isFinite(toe) &&
-      Number.isFinite(heelH) && Number.isFinite(toeH)) {
-    updateLoad(heel, toe, heelH, toeH);
-  }
+  const heel = Number(data.heel);
+  const toe  = Number(data.toe);
+  if (Number.isFinite(heel) && Number.isFinite(toe)) updateLoad(heel, toe);
 
   // Session max
   if (sessionMax === null || knee > sessionMax) {

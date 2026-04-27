@@ -42,39 +42,34 @@ const int     I2C_SCL        = 22;
 const uint8_t MPU_UPPER_ADDR = 0x68;   // AD0 LOW  (GND)
 const uint8_t MPU_LOWER_ADDR = 0x69;   // AD0 HIGH (3.3V)
 
-// HX711 pins — no conflict with I2C (21/22)
-// Each HX711 needs its own dedicated SCK (shared SCK corrupts gain switching)
-const int HX711_DT      = 18;   // injured leg DT
-const int HX711_SCK     = 19;   // injured leg SCK
-const int HX711_DT_H    =  5;   // healthy leg DT
-const int HX711_SCK_H   = 17;   // healthy leg SCK
+// HX711 pins (injured leg only — healthy leg added later)
+const int HX711_DT  = 18;
+const int HX711_SCK = 19;
 
-// Load cell calibration factors (from teammate's measurements)
-// HX711 Channel A (gain 128) = heel,  Channel B (gain 32) = toe
-const float CALIB_HEEL   = 43801.0f;   // injured leg
-const float CALIB_TOE    = 14072.0f;   // injured leg
-const float CALIB_HEEL_H = 40136.0f;   // healthy leg
-const float CALIB_TOE_H  = 24300.0f;   // healthy leg (sign flipped vs teammate's -24300)
+// Load cell calibration factors
+// Channel A (gain 128) = heel,  Channel B (gain 32) = toe
+const float CALIB_HEEL = 43801.0f;
+const float CALIB_TOE  = 14072.0f;
 
 // Safety thresholds
-const float VALGUS_ALERT_DEG  = 15.0f;
+// Valgus alert at 10° — catches deliberate knee cave without false alarms on
+// clean bends (which read ~3° after coupling compensation).
+const float VALGUS_ALERT_DEG  = 10.0f;
 const float FLEXION_ALERT_DEG = 100.0f;
 
 // Valgus coupling compensation (~0.17 deg of apparent valgus per deg of flex).
 // Empirically derived from CSV data. Re-derive if IMUs are remounted.
 const float VALGUS_COUPLING_K = 0.17f;
 
-// Timing
-const uint32_t BROADCAST_MS   =  50;   // 20 Hz WebSocket broadcast
-const uint32_t LOAD_UPDATE_MS = 200;   // 5 Hz load cell reads (HX711 is slow)
+// Broadcast interval
+const uint32_t BROADCAST_MS = 50;    // 20 Hz
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 WebSocketsServer webSocket(80);
 Adafruit_MPU6050 mpuUpper;
 Adafruit_MPU6050 mpuLower;
-HX711            scale;        // injured leg
-HX711            scaleHealthy; // healthy leg
+HX711            scale;
 
 // ── IMU STATE ─────────────────────────────────────────────────────────────────
 struct ImuState {
@@ -92,19 +87,22 @@ ImuState   stateUpper, stateLower;
 ZeroOffset zeroUpper,  zeroLower;
 
 // ── LOAD CELL STATE ───────────────────────────────────────────────────────────
-// Injured leg
 float heel_kg     = 0.0f;
 float toe_kg      = 0.0f;
 long  offset_heel = 0;
 long  offset_toe  = 0;
 bool  cells_ready = false;
 
-// Healthy leg
-float heel_kg_h     = 0.0f;
-float toe_kg_h      = 0.0f;
-long  offset_heel_h = 0;
-long  offset_toe_h  = 0;
-bool  cells_ready_h = false;
+// Non-blocking read state machine
+// Each call to updateLoadCells() does exactly ONE scale.read() only when
+// the HX711 signals data is ready (DT pin LOW). This never blocks the loop.
+//
+// Cycle: COMMIT_HEEL → READ_HEEL → COMMIT_TOE → READ_TOE → repeat
+//   COMMIT phases do a throwaway read that switches gain for the next channel.
+//   READ phases capture the real measurement.
+// At 10 SPS: full cycle takes ~400ms. At 80 SPS (RATE pin HIGH): ~50ms.
+enum LCPhase { LC_COMMIT_HEEL, LC_READ_HEEL, LC_COMMIT_TOE, LC_READ_TOE };
+LCPhase lcPhase = LC_COMMIT_HEEL;
 
 // ── IMU FILTER ────────────────────────────────────────────────────────────────
 void updateFilteredAngles(Adafruit_MPU6050 &mpu, ImuState &s) {
@@ -171,41 +169,26 @@ float getKneeValgus() {
   return raw - coupling;
 }
 
-// ── LOAD CELL HELPERS ─────────────────────────────────────────────────────────
-// HX711 multiplexes two load cells via gain switching:
-//   Gain 128 -> Channel A -> heel load cell
-//   Gain  32 -> Channel B -> toe  load cell
-// Each gain switch requires one throwaway read before the real read.
-// NOTE: Tie each HX711 RATE pin to 3.3V for 80 SPS mode.
-//       Floating/GND = 10 SPS — each read blocks ~100 ms.
-
-// ── Injured leg reads ──────────────────────────────────────────────────────
-long readHeelRaw() {
-  scale.set_gain(128);
-  scale.read();
-  return scale.read();
-}
-long readToeRaw() {
-  scale.set_gain(32);
-  scale.read();
-  return scale.read();
-}
-
+// ── LOAD CELL — TARE (blocking, only called at startup / on demand) ───────────
 void tareCells(int samples = 20) {
+  Serial.println("Taring load cells — keep foot flat and still...");
   long sumH = 0, sumT = 0;
-  Serial.println("Taring injured leg — keep foot flat...");
+
   for (int i = 0; i < samples; i++) {
-    sumH += readHeelRaw();
-    sumT += readToeRaw();
+    scale.set_gain(128); scale.read(); sumH += scale.read();   // heel
+    scale.set_gain(32);  scale.read(); sumT += scale.read();   // toe
   }
   offset_heel = sumH / samples;
   offset_toe  = sumT / samples;
-  Serial.printf("Injured tare done — heel: %ld  toe: %ld\n",
+  lcPhase = LC_COMMIT_HEEL;   // reset state machine after tare
+
+  Serial.printf("Tare done — heel offset: %ld  toe offset: %ld\n",
                 offset_heel, offset_toe);
 }
 
 void initLoadCells() {
   scale.begin(HX711_DT, HX711_SCK);
+
   unsigned long start = millis();
   while (!scale.is_ready() && millis() - start < 3000) delay(50);
 
@@ -213,74 +196,54 @@ void initLoadCells() {
     delay(200);
     tareCells();
     cells_ready = true;
-    Serial.println("Injured leg load cells: ready");
+    Serial.println("Load cells: ready");
   } else {
-    Serial.println("Injured leg load cells: NOT FOUND");
+    Serial.println("Load cells: NOT FOUND — check DT/SCK wiring");
   }
 }
 
-// ── Healthy leg reads ──────────────────────────────────────────────────────
-long readHeelRawH() {
-  scaleHealthy.set_gain(128);
-  scaleHealthy.read();
-  return scaleHealthy.read();
-}
-long readToeRawH() {
-  scaleHealthy.set_gain(32);
-  scaleHealthy.read();
-  return scaleHealthy.read();
-}
-
-void tareCellsHealthy(int samples = 20) {
-  long sumH = 0, sumT = 0;
-  Serial.println("Taring healthy leg — keep foot flat...");
-  for (int i = 0; i < samples; i++) {
-    sumH += readHeelRawH();
-    sumT += readToeRawH();
-  }
-  offset_heel_h = sumH / samples;
-  offset_toe_h  = sumT / samples;
-  Serial.printf("Healthy tare done — heel: %ld  toe: %ld\n",
-                offset_heel_h, offset_toe_h);
-}
-
-void initLoadCellsHealthy() {
-  scaleHealthy.begin(HX711_DT_H, HX711_SCK_H);
-  unsigned long start = millis();
-  while (!scaleHealthy.is_ready() && millis() - start < 3000) delay(50);
-
-  if (scaleHealthy.is_ready()) {
-    delay(200);
-    tareCellsHealthy();
-    cells_ready_h = true;
-    Serial.println("Healthy leg load cells: ready");
-  } else {
-    Serial.println("Healthy leg load cells: NOT FOUND");
-  }
-}
-
-// ── Combined update ────────────────────────────────────────────────────────
+// ── LOAD CELL — NON-BLOCKING UPDATE ──────────────────────────────────────────
+// Called every loop iteration. Does nothing unless HX711 has data ready.
+// One call = one scale.read() = microseconds when DT is already LOW.
 void updateLoadCells() {
-  if (cells_ready && scale.is_ready()) {
-    heel_kg = (readHeelRaw() - offset_heel) / CALIB_HEEL;
-    toe_kg  = (readToeRaw()  - offset_toe)  / CALIB_TOE;
-  }
-  if (cells_ready_h && scaleHealthy.is_ready()) {
-    heel_kg_h = (readHeelRawH() - offset_heel_h) / CALIB_HEEL_H;
-    toe_kg_h  = (readToeRawH()  - offset_toe_h)  / CALIB_TOE_H;
+  if (!cells_ready || !scale.is_ready()) return;
+
+  switch (lcPhase) {
+    case LC_COMMIT_HEEL:
+      // Throwaway read that commits gain 128 (heel) for the next conversion
+      scale.set_gain(128);
+      scale.read();
+      lcPhase = LC_READ_HEEL;
+      break;
+
+    case LC_READ_HEEL:
+      heel_kg = (scale.read() - offset_heel) / CALIB_HEEL;
+      lcPhase = LC_COMMIT_TOE;
+      break;
+
+    case LC_COMMIT_TOE:
+      // Throwaway read that commits gain 32 (toe) for the next conversion
+      scale.set_gain(32);
+      scale.read();
+      lcPhase = LC_READ_TOE;
+      break;
+
+    case LC_READ_TOE:
+      toe_kg = (scale.read() - offset_toe) / CALIB_TOE;
+      lcPhase = LC_COMMIT_HEEL;
+      break;
   }
 }
 
 // ── BROADCAST ─────────────────────────────────────────────────────────────────
 void broadcastSensorData() {
-  float flexion    = getKneeFlexion();
-  float valgus     = getKneeValgus();
-  float total_i    = heel_kg   + toe_kg;    // injured leg total
-  float total_h    = heel_kg_h + toe_kg_h;  // healthy leg total
-  bool  alert      = (flexion > FLEXION_ALERT_DEG) ||
-                     (fabsf(valgus) > VALGUS_ALERT_DEG);
+  float flexion  = getKneeFlexion();
+  float valgus   = getKneeValgus();
+  float total_kg = heel_kg + toe_kg;
+  bool  alert    = (flexion > FLEXION_ALERT_DEG) ||
+                   (fabsf(valgus) > VALGUS_ALERT_DEG);
 
-  char buf[420];
+  char buf[320];
   snprintf(buf, sizeof(buf),
     "{"
     "\"knee_angle\":%.1f,"
@@ -288,7 +251,6 @@ void broadcastSensorData() {
     "\"upper_pitch\":%.1f,\"upper_roll\":%.1f,"
     "\"lower_pitch\":%.1f,\"lower_roll\":%.1f,"
     "\"heel\":%.2f,\"toe\":%.2f,\"load_total\":%.2f,"
-    "\"heel_h\":%.2f,\"toe_h\":%.2f,\"load_total_h\":%.2f,"
     "\"alert\":%s,\"ts\":%lu"
     "}",
     flexion, valgus,
@@ -296,8 +258,7 @@ void broadcastSensorData() {
     UPPER_ROLL_SIGN  * (stateUpper.roll  - zeroUpper.roll),
     LOWER_PITCH_SIGN * (stateLower.pitch - zeroLower.pitch),
     LOWER_ROLL_SIGN  * (stateLower.roll  - zeroLower.roll),
-    heel_kg, toe_kg, total_i,
-    heel_kg_h, toe_kg_h, total_h,
+    heel_kg, toe_kg, total_kg,
     alert ? "true" : "false",
     millis());
 
@@ -321,9 +282,8 @@ void onWebSocketEvent(uint8_t clientNum, WStype_t type,
         webSocket.sendTXT(clientNum, "{\"calibrated\":true}");
       }
       else if (strcmp((char*)payload, "tare") == 0) {
-        Serial.println("[WS] Load cell tare requested — both legs");
+        Serial.println("[WS] Load cell tare requested");
         tareCells();
-        tareCellsHealthy();
         webSocket.sendTXT(clientNum, "{\"tared\":true}");
       }
       break;
@@ -359,9 +319,8 @@ void setup() {
   stateLower.lastMs = millis();
   calibrateZeroOffsets();
 
-  // Load cells — injured then healthy
+  // Load cells
   initLoadCells();
-  initLoadCellsHealthy();
 
   // WiFi AP
   WiFi.mode(WIFI_AP);
@@ -376,21 +335,17 @@ void setup() {
 }
 
 // ── LOOP ──────────────────────────────────────────────────────────────────────
-uint32_t lastBroadcast  = 0;
-uint32_t lastLoadUpdate = 0;
+uint32_t lastBroadcast = 0;
 
 void loop() {
   webSocket.loop();
 
-  // IMU — update every iteration for a smooth complementary filter
+  // IMU — every iteration for smooth complementary filter
   updateFilteredAngles(mpuUpper, stateUpper);
   updateFilteredAngles(mpuLower, stateLower);
 
-  // Load cells — update at 5 Hz; each read pair blocks ~25 ms at 80 SPS
-  if (millis() - lastLoadUpdate >= LOAD_UPDATE_MS) {
-    updateLoadCells();
-    lastLoadUpdate = millis();
-  }
+  // Load cells — non-blocking, self-throttles via HX711 DRDY signal
+  updateLoadCells();
 
   // Broadcast at 20 Hz
   if (millis() - lastBroadcast >= BROADCAST_MS) {
