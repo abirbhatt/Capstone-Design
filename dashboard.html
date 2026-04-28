@@ -673,7 +673,7 @@
   <div class="valgus-card">
     <div class="valgus-header">
       <span class="valgus-label">Knee Alignment (Valgus / Varus)</span>
-      <span style="font-size:11px;color:var(--muted)">alert at ±15°</span>
+      <span style="font-size:11px;color:var(--muted)">alert at ±10°</span>
     </div>
     <div class="valgus-number" id="valgusNumber" style="color:var(--teal)">0.0°</div>
     <div class="spirit-track">
@@ -717,6 +717,50 @@
     </div>
     <div class="balance-labels"><span>← Heel</span><span>Toe →</span></div>
     <div class="balance-status" id="balanceStatus" style="color:var(--muted);text-align:center;font-size:12px;font-weight:600;margin-top:8px">Waiting for data...</div>
+
+    <!-- ── Symmetry section (shown once healthy-leg ESP32 connects) ── -->
+    <div id="healthyLegSection" style="display:none">
+      <div class="load-divider"></div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <span class="load-leg-label" style="margin-bottom:0">INJURED LEG</span>
+        <span style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted)">SYMMETRY</span>
+        <span class="load-leg-label" style="margin-bottom:0">HEALTHY LEG</span>
+      </div>
+
+      <!-- Injured total | score | Healthy total -->
+      <div class="load-values" style="margin-bottom:12px">
+        <div class="load-val-box">
+          <div class="load-val-label">Inj. Total</div>
+          <div class="load-val-num" id="injTotalSym" style="color:var(--teal)">--</div>
+          <div class="load-val-unit">kg</div>
+        </div>
+        <div class="load-val-box" style="display:flex;flex-direction:column;align-items:center;justify-content:center">
+          <div id="symPctDisplay" style="font-size:32px;font-weight:900;font-variant-numeric:tabular-nums;color:var(--teal)">--%</div>
+        </div>
+        <div class="load-val-box">
+          <div class="load-val-label">Hlth. Total</div>
+          <div class="load-val-num" id="hlthTotalSym" style="color:var(--green)">--</div>
+          <div class="load-val-unit">kg</div>
+        </div>
+      </div>
+
+      <!-- Symmetry bar -->
+      <div class="symmetry-section">
+        <div class="symmetry-track">
+          <div class="symmetry-injured" id="symInjured" style="background:var(--teal)"></div>
+          <div class="symmetry-healthy" id="symHealthy" style="background:var(--green)"></div>
+          <div class="symmetry-center-tick"></div>
+        </div>
+        <div class="symmetry-labels">
+          <span>← Injured</span>
+          <span>Equal</span>
+          <span>Healthy →</span>
+        </div>
+        <div class="symmetry-status" id="symStatus" style="color:var(--muted)">Waiting for healthy-leg data…</div>
+      </div>
+    </div>
+
   </div>
 
   <!-- Chart -->
@@ -973,6 +1017,63 @@ function updateValgus(valgus) {
   fill.style.background = color;
 }
 
+// ── Symmetry display ─────────────────────────────────────────
+function updateSymmetry(injTotal, hlthTotal, symPct, symAlert, hConnected) {
+  const section = document.getElementById('healthyLegSection');
+
+  if (!hConnected) {
+    // Healthy ESP32 not connected or timed out — hide section
+    section.style.display = 'none';
+    return;
+  }
+  section.style.display = 'block';
+
+  // Update total labels
+  document.getElementById('injTotalSym').textContent  = injTotal.toFixed(2);
+  document.getElementById('hlthTotalSym').textContent = hlthTotal.toFixed(2);
+
+  // Symmetry bar proportions (each side = its share of combined load)
+  const combined = injTotal + hlthTotal;
+  if (combined > 0.5) {
+    const injPct  = (injTotal  / combined) * 100;
+    const hlthPct = (hlthTotal / combined) * 100;
+    document.getElementById('symInjured').style.width = injPct.toFixed(1)  + '%';
+    document.getElementById('symHealthy').style.width = hlthPct.toFixed(1) + '%';
+  } else {
+    document.getElementById('symInjured').style.width = '50%';
+    document.getElementById('symHealthy').style.width = '50%';
+  }
+
+  const pctEl    = document.getElementById('symPctDisplay');
+  const statusEl = document.getElementById('symStatus');
+
+  if (symPct < 0 || combined <= 0.5) {
+    // Not enough load on one or both legs to compute symmetry
+    pctEl.textContent    = '--%';
+    pctEl.style.color    = 'var(--muted)';
+    statusEl.textContent = 'Step on both sensors to measure symmetry';
+    statusEl.style.color = 'var(--muted)';
+    return;
+  }
+
+  const color = symAlert          ? 'var(--red)'
+              : symPct >= 85      ? 'var(--teal)'
+              :                     'var(--orange)';
+
+  pctEl.textContent = symPct.toFixed(0) + '%';
+  pctEl.style.color = color;
+  document.getElementById('symInjured').style.background = color;
+
+  statusEl.style.color = color;
+  if (symAlert) {
+    statusEl.textContent = `⚠ Low symmetry — shift more weight onto injured leg (${symPct.toFixed(0)}%)`;
+  } else if (symPct >= 85) {
+    statusEl.textContent = `✓ Good symmetry — ${symPct.toFixed(0)}% (target ≥ 70%)`;
+  } else {
+    statusEl.textContent = `Moderate symmetry — ${symPct.toFixed(0)}% (target ≥ 70%)`;
+  }
+}
+
 // ── Test panel helpers ───────────────────────────────────────
 function toggleTestPanel() {
   const body = document.getElementById('testBody');
@@ -1158,9 +1259,9 @@ function updateSafetyScore() {
 // ── CSV export ───────────────────────────────────────────────
 function downloadCSV() {
   if (sessionLog.length === 0) { alert('No data recorded yet.'); return; }
-  const header = 'timestamp_ms,elapsed_s,step,knee_flexion,valgus,upper_pitch,upper_roll,lower_pitch,lower_roll,heel_kg,toe_kg,load_total_kg,heel_h_kg,toe_h_kg,load_total_h_kg';
+  const header = 'timestamp_ms,elapsed_s,step,knee_flexion,valgus,upper_pitch,upper_roll,lower_pitch,lower_roll,heel_kg,toe_kg,load_total_kg,heel_h_kg,toe_h_kg,load_total_h_kg,symmetry_pct';
   const rows   = sessionLog.map(r =>
-    `${r.ts},${r.elapsed.toFixed(2)},${r.step},${r.knee_angle},${r.valgus},${r.upper_pitch},${r.upper_roll},${r.lower_pitch},${r.lower_roll},${r.heel},${r.toe},${r.load_total},${r.heel_h},${r.toe_h},${r.load_total_h}`
+    `${r.ts},${r.elapsed.toFixed(2)},${r.step},${r.knee_angle},${r.valgus},${r.upper_pitch},${r.upper_roll},${r.lower_pitch},${r.lower_roll},${r.heel},${r.toe},${r.load_total},${r.heel_h},${r.toe_h},${r.load_total_h},${r.symmetry}`
   );
   const csv  = [header, ...rows].join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -1199,6 +1300,7 @@ function handlePacket(data) {
     heel_h:       Number.isFinite(Number(data.heel_h))       ? Number(data.heel_h).toFixed(2)       : '0',
     toe_h:        Number.isFinite(Number(data.toe_h))        ? Number(data.toe_h).toFixed(2)        : '0',
     load_total_h: Number.isFinite(Number(data.load_total_h)) ? Number(data.load_total_h).toFixed(2) : '0',
+    symmetry:     Number.isFinite(Number(data.symmetry))     ? Number(data.symmetry).toFixed(1)     : '',
   });
 
   // Update live recording counters in test panel
@@ -1235,10 +1337,18 @@ function handlePacket(data) {
   // Valgus panel
   if (Number.isFinite(valgus)) updateValgus(valgus);
 
-  // Load distribution
-  const heel = Number(data.heel);
-  const toe  = Number(data.toe);
+  // Load distribution (injured leg)
+  const heel     = Number(data.heel);
+  const toe      = Number(data.toe);
+  const total_kg = Number.isFinite(heel) && Number.isFinite(toe) ? heel + toe : 0;
   if (Number.isFinite(heel) && Number.isFinite(toe)) updateLoad(heel, toe);
+
+  // Healthy leg + symmetry
+  const hConnected = data.h_connected === true || data.h_connected === 'true';
+  const loadH      = Number(data.load_total_h);
+  const symPct     = Number(data.symmetry);
+  const symAlert   = data.sym_alert === true || data.sym_alert === 'true';
+  updateSymmetry(total_kg, Number.isFinite(loadH) ? loadH : 0, symPct, symAlert, hConnected);
 
   // Session max
   if (sessionMax === null || knee > sessionMax) {
