@@ -58,3 +58,7 @@ If knee angle reads inverted, flip one of the `_SIGN` constants in `smart_brace_
 3. Open `dashboard.html`. The IP `192.168.4.1` is already filled in.
 4. Have the patient stand straight, then click Connect — the brace tares and zeros itself at that moment.
 5. Use the Tare and Calibrate buttons in the header to re-zero anytime. Export CSV dumps the session data.
+
+## Model files / binaries
+
+None. This project has no trained models or pre-built binaries. The Arduino IDE compiles the ESP32 firmware (~900 KB .bin per board) from the .ino sources at build time.
