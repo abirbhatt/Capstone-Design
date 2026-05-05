@@ -81,7 +81,7 @@ void setupSafetyOutputs() {
   // Motor setup
   ledcSetup(pwmChannel, pwmFreq, pwmResolution);
   ledcAttachPin(MOTOR_PIN, pwmChannel);
-  ledcWrite(pwmChannel, 0);
+  ledcWrite(pwmChannel, 255);
 
   // OLED setup
   if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDRESS)) {
@@ -121,12 +121,11 @@ void setLEDRed() {
 // MOTOR FUNCTIONS
 // ─────────────────────────────────────────────
 void motorOff() {
-  ledcWrite(pwmChannel, 0);
+  ledcWrite(pwmChannel, 255);   // instead of 0
   longBuzzState = false;
 }
 
 void longBuzzes() {
-  // Long repeated buzz pattern for danger
   unsigned long now = millis();
 
   if (now - lastLongBuzzUpdate >= 800) {
@@ -134,23 +133,22 @@ void longBuzzes() {
     longBuzzState = !longBuzzState;
 
     if (longBuzzState) {
-      ledcWrite(pwmChannel, 230);
+      ledcWrite(pwmChannel, 25);   // ON if inverted
     } else {
-      ledcWrite(pwmChannel, 0);
+      ledcWrite(pwmChannel, 255);  // OFF if inverted
     }
   }
 }
 
 void shortBuzzes() {
-  // Three short buzzes repeating for caution
   unsigned long phase = millis() % 1400;
 
   if ((phase < 120) ||
       (phase > 250 && phase < 370) ||
       (phase > 500 && phase < 620)) {
-    ledcWrite(pwmChannel, 170);
+    ledcWrite(pwmChannel, 85);     // ON if inverted
   } else {
-    ledcWrite(pwmChannel, 0);
+    ledcWrite(pwmChannel, 255);    // OFF if inverted
   }
 
   longBuzzState = false;
