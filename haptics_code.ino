@@ -16,7 +16,7 @@
 #define SCREEN_WIDTH  128
 #define SCREEN_HEIGHT 64
 #define OLED_RESET    -1
-#define OLED_ADDRESS  0x3D
+#define OLED_ADDRESS  0x3C
 
 // ── LED CONFIG ───────────────────────────────
 #define BRIGHTNESS    50
